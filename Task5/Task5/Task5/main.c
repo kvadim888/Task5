@@ -181,8 +181,7 @@ int16_t		signal_tone(double amplitude, double frequency, double phase, double ti
 	return sample.int16[3];
 }
 
-
-int32_t		signal_linsweep(double amplitude, double freq1, double freq2, double phase,
+int16_t		signal_linsweep(double amplitude, double freq1, double freq2, double phase,
 							double duration, double time)
 {
 	t_sample	sample;
@@ -193,7 +192,7 @@ int32_t		signal_linsweep(double amplitude, double freq1, double freq2, double ph
 	return sample.int16[3];
 }
 
-int32_t		signal_expsweep(double amplitude, double freq1, double freq2, double phase,
+int16_t		signal_expsweep(double amplitude, double freq1, double freq2, double phase,
 							double duration, double time)
 {
 	t_sample	sample;
@@ -204,25 +203,13 @@ int32_t		signal_expsweep(double amplitude, double freq1, double freq2, double ph
 	return sample.int16[3];
 }
 
-int32_t		signal_noise(double amplitude)
+int16_t		signal_noise(double amplitude)
 {
 	t_sample	sample;
 
 	sample.int32[1] = float_to_fix(amplitude) * (0.5 - rand());
 	return (int16_t)sample.int16[3];
 }
-
-/*============================================================================*/
-
-/*============  RING BUFFER  =================================================*/
-
-typedef struct	s_ringbuff
-{
-	size_t		datalen;	// lenght of data in samples
-	size_t		samplen;	// size of sample in bytes
-	uint16_t	*buff;		// head of buffer
-	uint16_t	carriage;	// carriage for moving on buffer
-}				t_ringbuff;
 
 /*============================================================================*/
 
@@ -249,8 +236,8 @@ typedef	enum
 int32_t		dsp_filterBiquad(t_biquad *filter, int32_t input)
 {
 	/* TransposedDirect Form II (two delay registers)*/
-	static t_sample	z1 = 0;
-	static t_sample	z2 = 0;
+	static t_sample	z1 = { 0 };
+	static t_sample	z2 = { 0 };
 	t_sample		output;
 
 	output.int64 = z1.int64;
@@ -334,6 +321,7 @@ int main(int ac, char **av)
 	double K = 0;
 	double peakGain = 0;
 	double Fc = 0;
+	double bandwidth = 0;
 
 	/* parsing CLI arguments -------------------------*/
 	if (ac < 2)
@@ -343,7 +331,7 @@ int main(int ac, char **av)
 	}
 
 	int opt_index = 0;
-	while ((opt_index = getopt(ac, av, "n:w:Q:t:g:a:f:p:r:")) != -1)
+	while ((opt_index = getopt(ac, av, "n:w:Q:F:G:t:g:a:f:p:r:")) != -1)
 	{
 		switch (opt_index)
 		{
@@ -370,7 +358,28 @@ int main(int ac, char **av)
 			}
 			break;
 		case 'Q':
-
+			bandwidth = atof(optarg);
+			if (bandwidth < 0)
+			{
+				printf("bandwidth < 0\n");
+				exit(1);
+			}
+			break;
+		case 'F':
+			Fc = atof(optarg);
+			if (Fc < 0)
+			{
+				printf("Fc < 0\n");
+				exit(1);
+			}
+			break;
+		case 'G':
+			peakGain = atof(optarg);
+			if (peakGain > 0)
+			{
+				printf("peakGain > 0\n");
+				exit(1);
+			}
 			break;
 		case 'g':
 			if (type_flag)
@@ -465,7 +474,7 @@ int main(int ac, char **av)
 			}
 			break;
 		case '?':
-			printf("unknown option : %c", opt_index);
+			printf("unknown option : %c %s\n", opt_index, optarg);
 			exit(1);
 			break;
 		default:
@@ -475,7 +484,7 @@ int main(int ac, char **av)
 		}
 	}
 
-	assert(FIR);
+	t_biquad *filter = dsp_newBiquad(filter_type_flag, peakGain, bandwidth, Fc);
 
 	/* WAV-file initialisation -----------------------*/
 	size_t length = round(duration * samplerate);
@@ -515,39 +524,31 @@ int main(int ac, char **av)
 	t_wavfile *wavfile = wav_wropen(filepath, &header, &wavbuffer);
 
 	/* ring buffer initialisation --------------------*/
-	t_ringbuff ring =
-	{
-		.datalen = filterlen,
-		.samplen = wavbuffer.samplen,
-		.buff = wavbuffer.data[0],
-		.carriage = 0 
-	};
 
+	t_sample sample;
 	for (size_t i = 0; i < length; i++)
 	{
 		switch (type_flag)
 		{
 		case TYPE_TONE:
-			ring.buff[ring.carriage] = signal_tone(amplitude, freq1, phase, i / samplerate);
+			sample.int16[3] = signal_tone(amplitude, freq1, phase, i / samplerate);
 			break;
 		case TYPE_LINSWEEP:
-			ring.buff[ring.carriage] = signal_linsweep(amplitude, freq1, freq2, phase, duration, i / samplerate);
+			sample.int16[3] = signal_linsweep(amplitude, freq1, freq2, phase, duration, i / samplerate);
 			break;
 		case TYPE_EXPSWEEP:
-			ring.buff[ring.carriage] = signal_expsweep(amplitude, freq1, freq2, phase, duration, i / samplerate);
+			sample.int16[3] = signal_expsweep(amplitude, freq1, freq2, phase, duration, i / samplerate);
 			break;
 		case TYPE_NOISE:
-			ring.buff[ring.carriage] = signal_noise(amplitude);
+			sample.int16[3] = signal_noise(amplitude);
 			break;
 		default:
-			ring.buff[ring.carriage] = signal_tone(amplitude, freq1, phase, i / samplerate);
+			sample.int16[3] = signal_tone(amplitude, freq1, phase, i / samplerate);
 			break;
 		}
-		wavbuffer.data[0][i] = ring.buff[ring.carriage];
-		t_sample sample;
-		sample.int32[1] = dsp_(&ring, FIR, filterlen);
+		wavbuffer.data[0][i] = sample.int16[3];
+		sample.int32[1] = dsp_filterBiquad(filter, sample.int32[1]);
 		wavbuffer.data[1][i] = sample.int16[3];
-		ring.carriage = (ring.carriage + 1) & (filterlen - 1);
 	}
 
 	wav_write(wavfile, wavbuffer.datalen);
