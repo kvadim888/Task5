@@ -207,7 +207,7 @@ int16_t		signal_noise(double amplitude)
 {
 	t_sample	sample;
 
-	sample.int32[1] = float_to_fix(amplitude) * (0.5 - rand());
+	sample.int32[1] = (int32_t)float_to_fix(amplitude) * (0.5 - rand());
 	return (int16_t)sample.int16[3];
 }
 
@@ -217,12 +217,14 @@ int16_t		signal_noise(double amplitude)
 
 typedef struct
 {
-	int32_t	a0;
-	int32_t	a1;
-	int32_t	a2;
-	int32_t	b1;
-	int32_t	b2;
-}			t_biquad;
+	int32_t		a0;
+	int32_t		a1;
+	int32_t		a2;
+	int32_t		b1;
+	int32_t		b2;
+	int64_t		z1;
+	int64_t		z2;
+}				t_biquad;
 
 typedef	enum
 {
@@ -236,55 +238,59 @@ typedef	enum
 int32_t		dsp_filterBiquad(t_biquad *filter, int32_t input)
 {
 	/* TransposedDirect Form II (two delay registers)*/
-	static t_sample	z1 = { 0 };
-	static t_sample	z2 = { 0 };
 	t_sample		output;
 
-	output.int64 = z1.int64;
+	output.int64 = filter->z1;
 	fix_mac(&output, input, filter->a0);
-	z1.int64 = z2.int64;
-	fix_mac(&z1, input, filter->a1);
-	fix_msub(&z1, output.int32[1], filter->b1);
-	z2.int64 = 0;
-	fix_mac(&z2, input, filter->a2);
-	fix_msub(&z2, output.int32[1], filter->b2);
+	filter->z1 = filter->z2;
+	fix_mac(&filter->z1, input, filter->a1);
+	fix_msub(&filter->z1, output.int32[1], filter->b1);
+	filter->z2 = 0;
+	fix_mac(&filter->z2, input, filter->a2);
+	fix_msub(&filter->z2, output.int32[1], filter->b2);
     return output.int32[1];
 }
 
-t_biquad	*dsp_newBiquad(t_biquad_type type, double peakGain, double Q, double Fc)
+t_biquad	*dsp_newBiquad(t_biquad_type type, double peakGain, double Q, double Fc, double samplerate)
 {
 	t_biquad	*filter = malloc(sizeof(t_biquad));
     double		norm;
     double		V = pow(10, fabs(peakGain) / 20.0);
-    double		K = tan(M_PI * Fc);
+	printf("V = %.8f\n", V);
+    double		K = tan(M_PI * Fc / samplerate);
+	printf("K = %.8f\n", K);
+
+	filter->z1 = 0;
+	filter->z2 = 0;
 
 	switch (type)
 	{
 	case biquad_LPF:
 		norm = 1 / (1 + K / Q + K * K);
-		filter->a0 = K * K * norm;
-		filter->a1 = 2 * filter->a0;
+		filter->a0 = float_to_fix(K * K * norm);
+		//printf("filter->a0 = %.9f (%.9f)\n", fix_to_float());
+		filter->a1 = fix_mul (2, filter->a0);
 		filter->a2 = filter->a0;
-		filter->b1 = 2 * (K * K - 1) * norm;
-		filter->b2 = (1 - K / Q + K * K) * norm;
+		filter->b1 = float_to_fix(2 * (K * K - 1) * norm);
+		filter->b2 = float_to_fix((1 - K / Q + K * K) * norm);
 		break;
 
 	case biquad_HPF:
 		norm = 1 / (1 + K / Q + K * K);
-		filter->a0 = 1 * norm;
-		filter->a1 = -2 * filter->a0;
+		filter->a0 = float_to_fix(norm);
+		filter->a1 = fix_mul(-2, filter->a0);
 		filter->a2 = filter->a0;
-		filter->b1 = 2 * (K * K - 1) * norm;
-		filter->b2 = (1 - K / Q + K * K) * norm;
+		filter->b1 = float_to_fix(2 * (K * K - 1) * norm);
+		filter->b2 = float_to_fix((1 - K / Q + K * K) * norm);
 		break;
 
 	case biquad_BPF:
 		norm = 1 / (1 + K / Q + K * K);
-		filter->a0 = K / Q * norm;
+		filter->a0 = float_to_fix(K / Q * norm);
 		filter->a1 = 0;
 		filter->a2 = -filter->a0;
-		filter->b1 = 2 * (K * K - 1) * norm;
-		filter->b2 = (1 - K / Q + K * K) * norm;
+		filter->b1 = float_to_fix(2 * (K * K - 1) * norm);
+		filter->b2 = float_to_fix((1 - K / Q + K * K) * norm);
 		break;
 
 	default:
@@ -484,7 +490,7 @@ int main(int ac, char **av)
 		}
 	}
 
-	t_biquad *filter = dsp_newBiquad(filter_type_flag, peakGain, bandwidth, Fc);
+	t_biquad *filter = dsp_newBiquad(filter_type_flag, peakGain, bandwidth, freq1, samplerate);
 
 	/* WAV-file initialisation -----------------------*/
 	size_t length = round(duration * samplerate);
@@ -550,12 +556,8 @@ int main(int ac, char **av)
 		sample.int32[1] = dsp_filterBiquad(filter, sample.int32[1]);
 		wavbuffer.data[1][i] = sample.int16[3];
 	}
-
 	wav_write(wavfile, wavbuffer.datalen);
-
 	wav_info(filepath, &header);
-
 	wav_close(&wavfile);
-
 	return 0;
 }

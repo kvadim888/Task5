@@ -3,16 +3,16 @@
 int32_t	float_to_fix(double num)
 {
 	int32_t	fixed;
-	if (num < -1)
+	if (num < -2)
 		return INT32_MIN;
-	if (num >= 1)
+	if (num >= 2)
 		return INT32_MAX;
-	return num * SCALE;
+	return num * SCALE30;
 }
 
 double	fix_to_float(int32_t num)
 {
-	return num / SCALE;
+	return num / SCALE30;
 }
 
 int32_t	fix_saturate(int64_t num)
@@ -29,7 +29,7 @@ int32_t	fix_saturate(int64_t num)
 int32_t	fix_round(int64_t num)
 {
 	t_sample tmp;
-	tmp.int64 = num + ((uint64_t)1 << 31);
+	tmp.int64 = num + ((uint64_t)1 << PRECISION30);
 	return tmp.int32[1];
 }
 
@@ -53,13 +53,13 @@ int32_t fix_mul(int32_t a, int32_t b)
 
 int32_t fix_mac(int64_t *acc, int32_t a, int32_t b)
  {
-	*acc += ((int64_t)a * b) << 1;
+	*acc += ((int64_t)a * b) << 2;
  	return fix_round(*acc);
  }
  
 int32_t fix_msub(int64_t *acc, int32_t a, int32_t b)
  {
-	*acc -= ((int64_t)a * b) << 1;
+	*acc -= ((int64_t)a * b) << 2;
  	return fix_round(*acc);
  }
 

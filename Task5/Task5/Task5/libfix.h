@@ -6,9 +6,11 @@
 
 #include <assert.h>
 
-#define PRECISION		31 
-#define SCALE			(double)(1LL << PRECISION)
+#define PRECISION31		31 
+#define PRECISION30		30 
 
+#define SCALE31			(double)(1LL << PRECISION31)
+#define SCALE30			(double)(1LL << PRECISION30)
 
 typedef union
 {
